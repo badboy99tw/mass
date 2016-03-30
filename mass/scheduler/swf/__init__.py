@@ -233,6 +233,7 @@ class SWFWorker(BaseWorker):
             config=Config(connect_timeout=config.CONNECT_TIMEOUT,
                           read_timeout=config.READ_TIMEOUT))
         self.decider = SWFDecider(self.domain, self.region)
+        self.task_token = None
 
     def try_except(self, exception=Exception, handler=print):
 
@@ -256,6 +257,7 @@ class SWFWorker(BaseWorker):
 
         if 'taskToken' not in task:
             return None
+        self.task_token = task['taskToken']
         return task
 
     def heartbeat(self, task_token, details=''):
@@ -264,7 +266,7 @@ class SWFWorker(BaseWorker):
             details=details
         )
 
-    def execute_action(self, action, task_token):
+    def execute_action(self, action):
         event = Event()
         queue = Queue()
         proc = Process(
@@ -277,7 +279,7 @@ class SWFWorker(BaseWorker):
         while not event.is_set():
             event.wait(config.ACTIVITY_HEARTBEAT_INTERVAL)
             try:
-                res = self.heartbeat(task_token)
+                res = self.heartbeat(self.task_token)
                 if res['cancelRequested']:
                     proc.terminate()
                     proc.join()
@@ -307,14 +309,14 @@ class SWFWorker(BaseWorker):
         activity_input = json.loads(task['input'])
         handler = InputHandler(activity_input['protocol'])
         action = handler.load(activity_input['body'])
-        result = self.execute_action(action, task['taskToken'])
+        result = self.execute_action(action)
         if result['status'] == 'completed':
             self.client.respond_activity_task_completed(
-                taskToken=task['taskToken'],
+                taskToken=self.task_token,
                 result=json.dumps(result['result'])[:config.MAX_RESULT_SIZE])
         else:
             self.client.respond_activity_task_failed(
-                taskToken=task['taskToken'],
+                taskToken=self.task_token,
                 details=result['details'][:config.MAX_DETAIL_SIZE],
                 reason=result['reason'][:config.MAX_REASON_SIZE])
 
